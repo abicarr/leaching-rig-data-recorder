@@ -653,18 +653,19 @@ function form(tn){
     <button class="btn ghost" data-back="1">Cancel</button></div></div>`;
 }
 
-function chainHTML(tn, row, here){
+function chainHTML(tn, row, here, depth = 0){
+  if(depth > 8) return `<div class="chain"><span class="link">&hellip;</span></div>`;
   let inner = `<button class="link${here?" here":""}" data-go="${esc(tn)}|${DATA[tn].indexOf(row)}">
     <span class="t">${esc(tn)}</span><span class="v">${esc(rowLabel(tn,row))||"&mdash;"}</span></button>`;
   const ps = lookups(tn);
   if(ps.length === 1){
     const p = byLabel(target(ps[0]), row[ps[0].n]);
-    if(p) inner += `<span class="joint">&#8592;</span>` + chainHTML(target(ps[0]), p, false);
+    if(p) inner += `<span class="joint">&#8592;</span>` + chainHTML(target(ps[0]), p, false, depth+1);
   }
   let out = `<div class="chain">${inner}</div>`;
   if(ps.length > 1) ps.forEach(f => {
     const p = byLabel(target(f), row[f.n]);
-    if(p) out += `<div class="branch">${chainHTML(target(f), p, false)}</div>`;
+    if(p) out += `<div class="branch">${chainHTML(target(f), p, false, depth+1)}</div>`;
   });
   return out;
 }
@@ -729,10 +730,17 @@ function render(){
   document.getElementById("readout").innerHTML = readout();
   document.getElementById("rail").innerHTML = TNAMES.length ? rail() : "";
   const m = document.getElementById("main");
-  m.innerHTML = !TNAMES.length ? `<p class="empty">Loading&hellip;</p>`
-    : view.mode === "form" ? form(view.table)
-    : view.mode === "record" ? record(view.table, view.row)
-    : list(view.table);
+  try {
+    m.innerHTML = !TNAMES.length ? `<p class="empty">Loading&hellip;</p>`
+      : view.mode === "form" ? form(view.table)
+      : view.mode === "record" ? record(view.table, view.row)
+      : list(view.table);
+  } catch(e){
+    console.error("Render failed:", e);
+    m.innerHTML = `<div class="dupwarn">Something went wrong showing this screen: ${esc(e.message)}
+      <br>Press F12 and check the Console tab for the full detail if this keeps happening.</div>
+      <div class="bar"><button class="btn" data-back="1">Back to sheet list</button></div>`;
+  }
   wire();
 }
 function on(sel, fn){ document.querySelectorAll(sel).forEach(el => fn(el)); }
