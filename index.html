@@ -492,10 +492,10 @@ function role(tn, f){
   return "text";
 }
 const HIDE = new Set(["Ref"]);                        // shown in detail, never in tables
-const lookups  = tn => T[tn].fields.filter(f => role(tn, f) === "lookup");
+const lookups  = tn => (T[tn] ? T[tn].fields : []).filter(f => role(tn, f) === "lookup");
 const children = tn => SCHEMA.tables.filter(t => lookups(t.name).some(f => target(f) === tn));
 const desc     = (tn, f) => FIELDS[tn + "|" + f.n] || "";
-const labelOf  = tn => T[tn].fields.some(f => f.n === "Label") ? "Label" : "Ref";
+const labelOf  = tn => T[tn] && T[tn].fields.some(f => f.n === "Label") ? "Label" : "Ref";
 const rowLabel = (tn, r) => String(r[labelOf(tn)] ?? "");
 const byLabel  = (tn, l) => (DATA[tn] || []).find(r => rowLabel(tn, r) === l);
 const dupOf    = (tn, r) => String(r["Duplicate?"] ?? "");
@@ -549,6 +549,7 @@ function rail(){
 }
 
 function list(tn){
+  if(!T[tn]) return `<h2>${esc(tn)}</h2><p class="empty">This sheet couldn't be loaded — its columns didn't come through from Excel correctly. Check the browser console (F12) for a warning naming the sheet, and check it's set up as a proper Excel Table.</p>`;
   const t = T[tn], rows = DATA[tn] || [], ql = q.toLowerCase();
   const cols = t.fields.filter(f => !HIDE.has(f.n));
   const shown = ql ? rows.filter(r => cols.some(f => String(r[f.n]??"").toLowerCase().includes(ql))) : rows;
@@ -584,6 +585,7 @@ function list(tn){
 }
 
 function form(tn){
+  if(!T[tn]) return `<h2>${esc(tn)}</h2><p class="empty">This sheet couldn't be loaded — its columns didn't come through from Excel correctly.</p>`;
   const t = T[tn], isEdit = editing !== null;
   let h = `<div class="crumb"><button data-back="1">${esc(tn)}</button> / ${isEdit?"edit":"new record"}</div>
   <h2>${isEdit?"Edit":"Add"} ${esc(tn.toLowerCase())}</h2>
@@ -649,6 +651,7 @@ function chainHTML(tn, row, here){
 }
 
 function record(tn, i){
+  if(!T[tn] || !DATA[tn] || !DATA[tn][i]) return `<h2>${esc(tn)}</h2><p class="empty">This record couldn't be found.</p>`;
   const t = T[tn], row = DATA[tn][i], dup = dupOf(tn, row);
   let h = `<div class="crumb"><button data-back="1">${esc(tn)}</button> / record ${i+1}</div>
   <h2>${esc(rowLabel(tn,row)) || esc(tn)}</h2>
@@ -734,6 +737,7 @@ function setup(){
    8. RENDER + EVENTS
    ============================================================ */
 function render(){
+  if(view.table && !T[view.table] && TNAMES.length) view.table = null;
   if(!view.table && TNAMES.length) view.table = TNAMES[0];
   document.getElementById("banner").innerHTML = banner();
   document.getElementById("readout").innerHTML = readout();
