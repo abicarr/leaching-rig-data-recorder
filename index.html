@@ -352,10 +352,12 @@ async function loadLive(){
 
   busy = "Reading the sheets"; render();
   const sheets = (await g(wbPath("/worksheets?$select=id,name"))).value;
-  sheets.forEach(s => SHEETID[s.name] = s.id);
+  sheets.forEach(s => { if(s && s.name) SHEETID[s.name] = s.id; });
 
   const tables = (await g(wbPath("/tables?$expand=worksheet($select=id,name)"))).value;
-  const usable = tables.filter(t => !t.worksheet.name.startsWith("_"));
+  const broken = tables.filter(t => !t.worksheet || !t.worksheet.name);
+  if(broken.length) console.warn("Tables with no readable worksheet link:", broken.map(t => t.name));
+  const usable = tables.filter(t => t.worksheet && t.worksheet.name && !t.worksheet.name.startsWith("_"));
 
   SCHEMA = { workbook:CONFIG.filePath, tables:[] };
   DATA = {};
