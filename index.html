@@ -298,6 +298,7 @@ async function g(path, opts={}){
   return r.status===204 ? null : r.json();
 }
 const wbPath = p => `/sites/${siteId}/drive/items/${itemId}/workbook${p}`;
+const isAttachment = f => /attachment/i.test(f.n);
 
 /* Uploads a file into SharePoint, in the same folder as the workbook, and
    returns the link SharePoint gives back for it. Excel can only ever hold
