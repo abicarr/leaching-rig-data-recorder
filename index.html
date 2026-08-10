@@ -305,9 +305,9 @@ const isAttachment = f => /attachment/i.test(f.n);
    text in a cell — this is what makes that text a real, working link
    instead of a filename someone has to type by hand. */
 async function uploadAttachment(file){
-  const folder = CONFIG.filePath.split("/").slice(0,-1).join("/");
+  const folder = CONFIG.filePath.split("/").slice(0,-1).join("/") + "/Attachments";
   const safeName = Date.now() + "_" + file.name.replace(/[^\w.\-]/g, "_");
-  const path = (folder ? folder + "/" : "") + safeName;
+  const path = folder + "/" + safeName;
   const t = await token();
   const r = await fetch(`${GRAPH}/sites/${siteId}/drive/root:/${path.split("/").map(encodeURIComponent).join("/")}:/content`, {
     method: "PUT",
@@ -594,7 +594,9 @@ function list(tn){
     cols.forEach(f => { const rl = role(tn,f), v = r[f.n] ?? "";
       const cls = f.n==="Duplicate?" ? "dup" : f.n==="Label" ? "key"
         : rl==="calc" ? "calc" : rl==="number" ? "num" : "";
-      h += `<td class="${cls}">${esc(rl==="date"?fmtDate(v):rl==="number"?fmtNum(v):v)||"&mdash;"}</td>`; });
+      const display = isAttachment(f) && /^https?:\/\//.test(v) ? "File attached"
+        : rl==="date" ? fmtDate(v) : rl==="number" ? fmtNum(v) : v;
+      h += `<td class="${cls}">${esc(display)||"&mdash;"}</td>`; });
     h += `</tr>`;
   });
   return h + `</tbody></table></div>`;
