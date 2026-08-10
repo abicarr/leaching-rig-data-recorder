@@ -299,6 +299,25 @@ async function g(path, opts={}){
 }
 const wbPath = p => `/sites/${siteId}/drive/items/${itemId}/workbook${p}`;
 
+/* Uploads a file into SharePoint, in the same folder as the workbook, and
+   returns the link SharePoint gives back for it. Excel can only ever hold
+   text in a cell — this is what makes that text a real, working link
+   instead of a filename someone has to type by hand. */
+async function uploadAttachment(file){
+  const folder = CONFIG.filePath.split("/").slice(0,-1).join("/");
+  const safeName = Date.now() + "_" + file.name.replace(/[^\w.\-]/g, "_");
+  const path = (folder ? folder + "/" : "") + safeName;
+  const t = await token();
+  const r = await fetch(`${GRAPH}/sites/${siteId}/drive/root:/${path.split("/").map(encodeURIComponent).join("/")}:/content`, {
+    method: "PUT",
+    headers: { Authorization: "Bearer " + t, "Content-Type": file.type || "application/octet-stream" },
+    body: file
+  });
+  if(!r.ok) throw new Error(`Upload failed (${r.status})`);
+  const item = await r.json();
+  return item.webUrl;
+}
+
 /* Runs once, immediately on page load — not inside the button click.
    This is what lets a redirect flow work at all: pca must exist and be
    initialised, and any redirect response must be collected, before the
@@ -523,29 +542,25 @@ function banner(){
   if(err) return `<div class="banner bad"><b>Could not reach the workbook.</b> ${esc(err)}
     <button data-retry="1">Try again</button></div>`;
   if(busy) return `<div class="banner good"><span class="spin"></span>${esc(busy)}&hellip;</div>`;
-  if(live) return `<div class="banner good"><b>Connected.</b> Reading and writing
+  return `<div class="banner good"><b>Connected.</b> Reading and writing
     ${esc(CONFIG.filePath)} on ${esc(CONFIG.siteHost)}.<button data-refresh="1">Refresh</button></div>`;
-  return `<div class="banner warn"><b>Not connected &mdash; sample copy.</b>
-    These are the example rows from the workbook, held in memory. Nothing you enter is saved.
-    <button data-setup="1">How to connect</button></div>`;
 }
 function readout(){
   const cols = SCHEMA.tables.reduce((s,t) => s + t.fields.length, 0);
   const rows = Object.values(DATA).reduce((s,a) => s + a.length, 0);
   const lk = SCHEMA.tables.reduce((s,t) => s + lookups(t.name).length, 0);
   const fx = SCHEMA.tables.reduce((s,t) => s + t.fields.filter(f => f.fx).length, 0);
-  return `<span class="live">${live ? "live from" : "sample of"} <b>${esc(SCHEMA.workbook)}</b></span>
+  return `<span class="live">live from <b>${esc(SCHEMA.workbook)}</b></span>
     <span><b>${SCHEMA.tables.length}</b> sheets</span><span><b>${cols}</b> columns</span>
     <span><b>${lk}</b> links found</span><span><b>${fx}</b> formulas</span><span><b>${rows}</b> rows</span>`;
 }
 function rail(){
   let h = `<div class="rail-head">Sheets in workbook</div>`;
   SCHEMA.tables.forEach(t => {
-    h += `<button class="depth${Math.min(depth(t.name),2)}" aria-current="${view.table===t.name&&view.mode!=="setup"}"
+    h += `<button class="depth${Math.min(depth(t.name),2)}" aria-current="${view.table===t.name}"
       data-t="${esc(t.name)}"><span>${esc(t.name)}</span><span class="n">${(DATA[t.name]||[]).length}</span></button>`;
   });
-  return h + `<div class="rail-head" style="padding-top:20px">Setup</div>
-    <button data-setup="1" aria-current="${view.mode==="setup"}"><span>Connect to workbook</span></button>`;
+  return h;
 }
 
 function list(tn){
@@ -612,6 +627,10 @@ function form(tn){
       h += `<input id="${id}" type="date" value="${esc(v)}" data-f="${esc(f.n)}">`;
     } else if(rl === "number"){
       h += `<input id="${id}" type="number" step="any" value="${esc(v)}" data-f="${esc(f.n)}">`;
+    } else if(rl === "text" && isAttachment(f)){
+      h += `<input id="${id}" type="text" value="${esc(v)}" placeholder="Uploaded automatically, or paste a link" data-f="${esc(f.n)}">
+        <input type="file" accept="image/*,.pdf" data-upload="${esc(f.n)}" style="margin-top:6px">
+        <span class="hint" id="up_${id}"></span>`;
     } else {
       h += `<input id="${id}" type="text" value="${esc(v)}" data-f="${esc(f.n)}" autocomplete="off">`;
       const s = seen(tn, f).filter(x => x !== v);
@@ -626,7 +645,7 @@ function form(tn){
   if(cs.length){
     h += `<fieldset><legend>Excel works these out when you save</legend><div class="grid">`;
     cs.forEach(f => h += `<div class="f${f.n==="Label"?" wide":""}"><label>${esc(f.n)}</label>
-      <div class="ro">&mdash;</div><span class="fxnote">${esc(f.fx)}</span></div>`);
+      <div class="ro">&mdash;</div></div>`);
     h += `</div></fieldset>`;
   }
   return h + `<div class="bar" style="margin:0">
@@ -669,6 +688,8 @@ function record(tn, i){
       const tg = target(f), p = byLabel(tg,v), pi = p ? DATA[tg].indexOf(p) : -1;
       h += `<dd>${pi>=0 ? `<button data-go="${esc(tg)}|${pi}">${esc(v)}</button>`
         : (v ? esc(v)+` <span class="chip" style="color:var(--alert)">no match</span>` : "&mdash;")}</dd>`;
+    } else if(isAttachment(f) && /^https?:\/\//.test(v)){
+      h += `<dd><a href="${esc(v)}" target="_blank" rel="noopener">Open file</a></dd>`;
     } else {
       h += `<dd class="${rl==="calc"?"calc":rl==="number"?"mono":""}">${
         esc(rl==="date"?fmtDate(v):rl==="number"?fmtNum(v):v)||"&mdash;"}</dd>`;
@@ -698,41 +719,6 @@ function record(tn, i){
   return h;
 }
 
-function setup(){
-  return `<h2>Connect to the workbook</h2>
-  <p class="sub">Three values are needed, and only your Microsoft 365 administrator can issue the first two.</p>
-  <div class="connect setup">
-    <span class="status">${live ? "Connected" : "Not connected"}</span>
-    <p><b>What to ask IT for</b></p>
-    <ol>
-      <li>An <b>app registration</b> in Entra ID (Azure AD), of type <b>Single-page application</b>.
-          Ask them for the <b>Application (client) ID</b> and the <b>Directory (tenant) ID</b>.</li>
-      <li>This page's own address added as a <b>redirect URI</b> on that registration.
-          If you are running the file locally, that address is
-          <code>${esc(location.origin + location.pathname)}</code></li>
-      <li><b>Delegated</b> Microsoft Graph permission <code>Sites.ReadWrite.All</code>,
-          with admin consent granted.</li>
-    </ol>
-    <p><b>Then edit this file</b> &mdash; open it in Notepad or VS Code, find the CONFIG block at
-       the top of the script, and fill in these four values:</p>
-    <pre>const CONFIG = {
-  clientId: <span class="s">"the Application (client) ID"</span>,
-  tenantId: <span class="s">"the Directory (tenant) ID"</span>,
-  siteHost: <span class="s">"${esc(CONFIG.siteHost)}"</span>,
-  sitePath: <span class="s">"${esc(CONFIG.sitePath)}"</span>,
-  filePath: <span class="s">"${esc(CONFIG.filePath)}"</span>
-};</pre>
-    <p><code>sitePath</code> is the part of your SharePoint address after the host name.
-       <code>filePath</code> is where the workbook sits inside that site's document library.</p>
-    <p><b>One catch worth knowing.</b> This page must be served over http, not opened as a file,
-       or sign-in will refuse to run. The quickest way: put this file in a folder, open a terminal
-       there, run <code>python -m http.server 8080</code>, then visit
-       <code>http://localhost:8080</code> and give IT that address as the redirect URI in step 2.</p>
-    <p><b>And one rule.</b> Do not have the workbook open in the installed desktop Excel while
-       using this app. Desktop Excel locks the file and writes will fail. Excel in the browser is fine.</p>
-  </div>`;
-}
-
 /* ============================================================
    8. RENDER + EVENTS
    ============================================================ */
@@ -743,8 +729,7 @@ function render(){
   document.getElementById("readout").innerHTML = readout();
   document.getElementById("rail").innerHTML = TNAMES.length ? rail() : "";
   const m = document.getElementById("main");
-  m.innerHTML = view.mode === "setup" ? setup()
-    : !TNAMES.length ? `<p class="empty">Loading&hellip;</p>`
+  m.innerHTML = !TNAMES.length ? `<p class="empty">Loading&hellip;</p>`
     : view.mode === "form" ? form(view.table)
     : view.mode === "record" ? record(view.table, view.row)
     : list(view.table);
@@ -753,8 +738,7 @@ function render(){
 function on(sel, fn){ document.querySelectorAll(sel).forEach(el => fn(el)); }
 function wire(){
   on("[data-t]", b => b.onclick = () => { q=""; view={mode:"list",table:b.dataset.t,row:null}; render(); });
-  on("[data-setup]", b => b.onclick = () => { view={...view, mode:"setup"}; render(); });
-  on("[data-retry]", b => b.onclick = () => { err=null; boot(); });
+  on("[data-retry]", b => b.onclick = () => { err=null; proceedToWorkbook(); });
   on("[data-refresh]", b => b.onclick = async () => {
     try { busy="Refreshing"; render(); for(const t of SCHEMA.tables) await reloadTable(t.name);
           busy=""; render(); toast("Refreshed from the workbook"); }
@@ -783,6 +767,22 @@ function wire(){
   on("[data-fill]", b => b.onclick = () => {
     const [f, v] = b.dataset.fill.split("|"); draft[f] = v; render();
     const n = document.querySelector(`[data-f="${f}"]`); if(n) n.focus();
+  });
+  on("[data-upload]", el => el.onchange = async () => {
+    const fn = el.dataset.upload, file = el.files[0];
+    if(!file) return;
+    const status = document.getElementById("up_f_" + fn.replace(/\W/g,"_"));
+    const textInput = document.querySelector(`[data-f="${fn}"]`);
+    if(status) status.textContent = "Uploading…";
+    if(!live){ if(status) status.textContent = "Not connected — can't upload in this preview."; return; }
+    try {
+      const url = await uploadAttachment(file);
+      draft[fn] = url;
+      if(textInput) textInput.value = url;
+      if(status) status.textContent = "Uploaded: " + file.name;
+    } catch(e){
+      if(status) status.textContent = "Upload failed — " + e.message;
+    }
   });
   on("[data-grow]", b => b.onclick = async () => {
     const fn = b.dataset.grow, f = T[view.table].fields.find(x => x.n === fn), k = listKey(f);
